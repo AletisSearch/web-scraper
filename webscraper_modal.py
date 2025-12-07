@@ -7,7 +7,7 @@ playwright_image = modal.Image.debian_slim(python_version="3.13").run_commands(
     "apt-get install -y software-properties-common",
     "apt-add-repository non-free",
     "apt-add-repository contrib",
-    "pip install playwright boto3",
+    "pip install playwright boto3 Pillow",
     "playwright install-deps chromium",
     "playwright install chromium",
 )
@@ -22,6 +22,7 @@ class PageData:
 def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
     print(f"Starting web scrape for URL: {url}")
     from playwright.sync_api import sync_playwright, Route, Request
+    from PIL import Image
     import boto3, os, time, urllib.parse, re, json
 
     cleanup = re.compile("([.]{2,}|[/]{2,})")
@@ -36,11 +37,11 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
         config=boto3.session.Config(signature_version="s3v4"),  # type: ignore
     )
     out = {
-        "type": str,
-        "headers": dict[str, str],
-        "status": int,
+        "type": "",
+        "headers": {},
+        "status": 0,
     }
-    final_url = ""
+    final_url = url
 
     def return_value(
         success: bool,
@@ -59,12 +60,11 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
             "headers": headers,
         }
 
+    request_types: dict[str, str] = {}
+
     def requestFilter(route: Route, request: Request):
         print(f"Request filter: {request.resource_type} - {request.url}")
-
-        if request.url == url:
-            out["type"] = request.resource_type
-            print(f"Set main resource type: {request.resource_type}")
+        request_types["request.url"] = request.resource_type
 
         match request.resource_type:
             case "image" | "media" | "font":
@@ -86,11 +86,10 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
 
     print(f"Running scrape for URL: {url}")
 
-    timestamp = int(time.time())
-    screenshot_file = f"screenshot.{timestamp}"
-    content_file = f"content.{timestamp}"
-    body_file = f"body.{timestamp}"
-    metadata_file = f"metadata.{timestamp}"
+    screenshot_file = "screenshot.webp"
+    content_file = "content.html"
+    body_file = "body"
+    metadata_file = "metadata.json"
 
     with sync_playwright() as p:
         print("Launching browser")
@@ -106,24 +105,16 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
             return return_value(success=False, url=url)
         print(f"Navigation completed, status: {response.status}")
 
-        try:
-            print("Waiting for DOM content to load")
-            page.wait_for_load_state("domcontentloaded", timeout=2000)
-            print("Waiting for network idle state")
-            page.wait_for_load_state("networkidle", timeout=2000)
-            print("Page loaded...")
-        except Exception as e:
-            print(f"Wait timeout occurred for URL {url}: {e}")
-
-        # links = page.eval_on_selector_all(
-        #     "a[href]", "elements => elements.map(element => element.href)"
-        # )
-        # out["links"] = list(set(links))
-
         out["status"] = response.status
         out["headers"] = response.headers
         final_url = response.url
         print(f"Final URL after redirects: {final_url}")
+
+        if final_url in request_types:
+            out["type"] = request_types[final_url]
+            print(f"Set main resource type: {out["type"]}")
+        else:
+            print(f"Main resource type not found")
 
         print(f"Extracted response status: {response.status}")
         if response.status < 200 or response.status > 299:
@@ -139,8 +130,25 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
 
         print(f"Extracted {len(out['headers'])} headers")
 
+        try:
+            print("Waiting for DOM content to load")
+            page.wait_for_load_state("domcontentloaded", timeout=2000)
+            print("Waiting for network idle state")
+            page.wait_for_load_state("networkidle", timeout=2000)
+            print("Page loaded...")
+        except Exception as e:
+            print(f"Wait timeout occurred for URL {url}: {e}")
+
+        # links = page.eval_on_selector_all(
+        #     "a[href]", "elements => elements.map(element => element.href)"
+        # )
+        # out["links"] = list(set(links))
+
         print(f"Taking screenshot")
-        page.screenshot(path=f"/tmp/{screenshot_file}", full_page=False, type="jpeg")
+        page.screenshot(path="/tmp/screenshot.png", full_page=False, type="png")
+
+        img = Image.open("/tmp/screenshot.png", formats=["png"])
+        img.save(f"/tmp/{screenshot_file}", "webp", optimize=True, quality=80)
 
         print(f"Saving response body")
         try:
@@ -205,7 +213,7 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
 @app.local_entrypoint()
 def main():
     print("Starting local entrypoint for web scraper")
-    urls = ["https://assets.grokipedia.com/sitemap/sitemap-index.xml"]
+    urls = ["https://en.wikipedia.org/wiki/2023_in_film"]
     print(f"Processing {len(urls)} URLs: {urls}")
     for result in getPageModal.map(urls):
         print(f"Result: {result}")
