@@ -7,7 +7,7 @@ playwright_image = modal.Image.debian_slim(python_version="3.13").run_commands(
     "apt-get install -y software-properties-common",
     "apt-add-repository non-free",
     "apt-add-repository contrib",
-    "pip install playwright boto3 Pillow",
+    "pip install playwright playwright-stealth boto3 Pillow",
     "playwright install-deps chromium",
     "playwright install chromium",
 )
@@ -23,7 +23,8 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
     print(f"Starting web scrape for URL: {url}")
     from playwright.sync_api import sync_playwright, Route, Request
     from PIL import Image
-    import boto3, os, time, urllib.parse, re, json
+    from playwright_stealth import Stealth
+    import boto3, os, urllib.parse, re, json
 
     cleanup = re.compile("([.]{2,}|[/]{2,})")
 
@@ -91,7 +92,7 @@ def getPageModal(url: str) -> dict[str, bool | str | dict[str, str] | int]:
     body_file = "body"
     metadata_file = "metadata.json"
 
-    with sync_playwright() as p:
+    with Stealth().use_sync(sync_playwright()) as p:
         print("Launching browser")
         browser = p.chromium.launch()
         print("Creating new page")
